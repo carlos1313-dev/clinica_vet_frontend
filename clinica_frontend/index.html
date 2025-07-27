@@ -40,6 +40,27 @@
             text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
         }
 
+        /* Status indicator */
+        .connection-status {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            padding: 10px 20px;
+            border-radius: 25px;
+            color: white;
+            font-weight: bold;
+            z-index: 1000;
+            transition: all 0.3s ease;
+        }
+
+        .status-online {
+            background: linear-gradient(45deg, #28a745, #20c997);
+        }
+
+        .status-offline {
+            background: linear-gradient(45deg, #dc3545, #c82333);
+        }
+
         .tabs {
             display: flex;
             background: #f8f9fa;
@@ -154,6 +175,12 @@
             box-shadow: 0 4px 12px rgba(0,0,0,0.2);
         }
 
+        .btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            transform: none;
+        }
+
         .btn-primary {
             background: linear-gradient(45deg, #007bff, #0056b3);
             color: white;
@@ -227,6 +254,12 @@
             border: 1px solid #f5c6cb;
         }
 
+        .alert-warning {
+            background: #fff3cd;
+            color: #856404;
+            border: 1px solid #ffeaa7;
+        }
+
         .loading {
             text-align: center;
             padding: 40px;
@@ -283,9 +316,20 @@
             margin-bottom: 20px;
             opacity: 0.5;
         }
+
+        .retry-button {
+            margin-top: 20px;
+            background: linear-gradient(45deg, #6c757d, #495057);
+            color: white;
+        }
     </style>
 </head>
 <body>
+    <!-- Connection Status -->
+    <div id="connectionStatus" class="connection-status status-offline">
+        🔴 Conectando...
+    </div>
+
     <div class="container">
         <div class="header">
             <h1>🐾 Clínica Veterinaria</h1>
@@ -435,37 +479,122 @@
     </div>
 
     <script>
-        const API_BASE = 'https://clinvet-production.up.railway.app';
+        // Configuración de API con detección automática
+        const getApiBase = () => {
+            if (window.location.hostname === 'localhost') {
+                return 'http://localhost:8080';
+            }
+            // URL de tu backend en Railway
+            return 'https://clinvet-production.up.railway.app';
+        };
+
+        const API_BASE = getApiBase();
         let dueniosData = [];
         let mascotasData = [];
+        let isOnline = false;
 
-        // Inicialización
+        // Inicialización mejorada
         document.addEventListener('DOMContentLoaded', function() {
-            getDuenios();
-            getMascotas();
-            loadDueniosSelect();
+            checkConnection();
+            initializeApp();
         });
+
+        // Verificar conexión con el backend
+        async function checkConnection() {
+            try {
+                const response = await fetch(`${API_BASE}/duenio/traer`, {
+                    method: 'GET',
+                    headers: {
+                        'Accept': 'application/json',
+                        'Content-Type': 'application/json'
+                    }
+                });
+                
+                if (response.ok) {
+                    updateConnectionStatus(true);
+                    return true;
+                } else {
+                    throw new Error(`HTTP ${response.status}`);
+                }
+            } catch (error) {
+                console.error('Error de conexión:', error);
+                updateConnectionStatus(false);
+                return false;
+            }
+        }
+
+        function updateConnectionStatus(online) {
+            isOnline = online;
+            const statusEl = document.getElementById('connectionStatus');
+            
+            if (online) {
+                statusEl.className = 'connection-status status-online';
+                statusEl.innerHTML = '🟢 Conectado';
+            } else {
+                statusEl.className = 'connection-status status-offline';
+                statusEl.innerHTML = '🔴 Sin conexión';
+            }
+        }
+
+        async function initializeApp() {
+            if (!isOnline) {
+                showMessage('No se puede conectar con el servidor. Verifique la conexión.', 'warning');
+                return;
+            }
+            
+            await getDuenios();
+            await getMascotas();
+            loadDueniosSelect();
+        }
+
+        // Función mejorada para manejo de errores HTTP
+        async function handleApiRequest(url, options = {}) {
+            try {
+                const defaultOptions = {
+                    headers: {
+                        'Accept': 'application/json',
+                        'Content-Type': 'application/json'
+                    }
+                };
+
+                const finalOptions = { ...defaultOptions, ...options };
+                
+                const response = await fetch(url, finalOptions);
+                
+                if (!response.ok) {
+                    const errorText = await response.text();
+                    throw new Error(`HTTP ${response.status}: ${errorText || response.statusText}`);
+                }
+                
+                const contentType = response.headers.get('content-type');
+                if (contentType && contentType.includes('application/json')) {
+                    return await response.json();
+                } else {
+                    return await response.text();
+                }
+            } catch (error) {
+                if (error.name === 'TypeError' && error.message.includes('fetch')) {
+                    throw new Error('Error de red: No se puede conectar con el servidor');
+                }
+                throw error;
+            }
+        }
 
         // Gestión de tabs
         function showTab(tabName) {
-            // Ocultar todos los contenidos
             document.querySelectorAll('.tab-content').forEach(content => {
                 content.classList.remove('active');
             });
             
-            // Remover clase active de todos los tabs
             document.querySelectorAll('.tab').forEach(tab => {
                 tab.classList.remove('active');
             });
             
-            // Mostrar el contenido seleccionado
             document.getElementById(tabName).classList.add('active');
-            
-            // Agregar clase active al tab seleccionado
             event.target.classList.add('active');
         }
 
-        // Funciones para mostrar mensajes
+        // Funciones para mostrar mensajes mejoradas
         function showMessage(message, type = 'success') {
             const alertDiv = document.createElement('div');
             alertDiv.className = `alert alert-${type}`;
@@ -483,37 +612,40 @@
             document.getElementById(containerId).innerHTML = '<div class="loading">Cargando datos...</div>';
         }
 
-        function showEmptyState(containerId, message) {
+        function showEmptyState(containerId, message, showRetry = false) {
+            const retryButton = showRetry ? 
+                `<button class="btn retry-button" onclick="initializeApp()">🔄 Reintentar conexión</button>` : '';
+            
             document.getElementById(containerId).innerHTML = `
                 <div class="empty-state">
                     <div style="font-size: 3em; margin-bottom: 20px; opacity: 0.5;">📋</div>
                     <p>${message}</p>
+                    ${retryButton}
                 </div>
             `;
         }
 
-        // DUEÑOS
+        // DUEÑOS - Funciones mejoradas
         async function getDuenios() {
             showLoading('dueniosList');
             try {
-                const response = await fetch(`${API_BASE}/duenio/traer`);
-                if (!response.ok) throw new Error('Error al obtener dueños');
-                
-                dueniosData = await response.json();
+                dueniosData = await handleApiRequest(`${API_BASE}/duenio/traer`);
                 displayDuenios(dueniosData);
                 updateStats();
                 loadDueniosSelect();
+                updateConnectionStatus(true);
             } catch (error) {
-                console.error('Error:', error);
-                showMessage('Error al cargar los dueños. Verifique que el servidor esté ejecutándose.', 'error');
-                showEmptyState('dueniosList', 'No se pudieron cargar los dueños');
+                console.error('Error al obtener dueños:', error);
+                showMessage(`Error: ${error.message}`, 'error');
+                showEmptyState('dueniosList', 'No se pudieron cargar los dueños', true);
+                updateConnectionStatus(false);
             }
         }
 
         function displayDuenios(duenios) {
             const container = document.getElementById('dueniosList');
             
-            if (duenios.length === 0) {
+            if (!duenios || duenios.length === 0) {
                 showEmptyState('dueniosList', 'No hay dueños registrados');
                 return;
             }
@@ -525,7 +657,9 @@
                     <strong>Nombre:</strong> ${duenio.nombre} ${duenio.apellido} | 
                     <strong>Celular:</strong> ${duenio.celular}
                     <div style="margin-top: 10px;">
-                        <button class="btn btn-danger" onclick="deleteDuenio(${duenio.id_duenio})">Eliminar</button>
+                        <button class="btn btn-danger" onclick="deleteDuenio(${duenio.id_duenio})" ${!isOnline ? 'disabled' : ''}>
+                            Eliminar
+                        </button>
                     </div>
                 </div>
             `).join('');
@@ -533,6 +667,11 @@
 
         document.getElementById('duenioForm').addEventListener('submit', async function(e) {
             e.preventDefault();
+            
+            if (!isOnline) {
+                showMessage('No hay conexión con el servidor', 'error');
+                return;
+            }
             
             const duenio = {
                 dni: document.getElementById('duenioDni').value,
@@ -542,64 +681,61 @@
             };
 
             try {
-                const response = await fetch(`${API_BASE}/duenio/crear`, {
+                await handleApiRequest(`${API_BASE}/duenio/crear`, {
                     method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json'
-                    },
                     body: JSON.stringify(duenio)
                 });
-
-                if (!response.ok) throw new Error('Error al crear dueño');
                 
                 showMessage('Dueño creado exitosamente');
                 this.reset();
-                getDuenios();
+                await getDuenios();
             } catch (error) {
-                console.error('Error:', error);
-                showMessage('Error al crear el dueño', 'error');
+                console.error('Error al crear dueño:', error);
+                showMessage(`Error: ${error.message}`, 'error');
             }
         });
 
         async function deleteDuenio(id) {
+            if (!isOnline) {
+                showMessage('No hay conexión con el servidor', 'error');
+                return;
+            }
+
             if (!confirm('¿Está seguro de eliminar este dueño?')) return;
 
             try {
-                const response = await fetch(`${API_BASE}/duenio/borrar/${id}`, {
+                await handleApiRequest(`${API_BASE}/duenio/borrar/${id}`, {
                     method: 'DELETE'
                 });
-
-                if (!response.ok) throw new Error('Error al eliminar dueño');
                 
                 showMessage('Dueño eliminado exitosamente');
-                getDuenios();
+                await getDuenios();
             } catch (error) {
-                console.error('Error:', error);
-                showMessage('Error al eliminar el dueño', 'error');
+                console.error('Error al eliminar dueño:', error);
+                showMessage(`Error: ${error.message}`, 'error');
             }
         }
 
-        // MASCOTAS
+        // MASCOTAS - Funciones mejoradas
         async function getMascotas() {
             showLoading('mascotasList');
             try {
-                const response = await fetch(`${API_BASE}/mascotas/traer`);
-                if (!response.ok) throw new Error('Error al obtener mascotas');
-                
-                mascotasData = await response.json();
+                mascotasData = await handleApiRequest(`${API_BASE}/mascotas/traer`);
                 displayMascotas(mascotasData);
                 updateStats();
+                updateConnectionStatus(true);
             } catch (error) {
-                console.error('Error:', error);
-                showMessage('Error al cargar las mascotas', 'error');
-                showEmptyState('mascotasList', 'No se pudieron cargar las mascotas');
+                console.error('Error al obtener mascotas:', error);
+                showMessage(`Error: ${error.message}`, 'error');
+                showEmptyState('mascotasList', 'No se pudieron cargar las mascotas', true);
+                updateConnectionStatus(false);
             }
         }
 
         function displayMascotas(mascotas) {
             const container = document.getElementById('mascotasList');
             
-            if (mascotas.length === 0) {
+            if (!mascotas || mascotas.length === 0) {
                 showEmptyState('mascotasList', 'No hay mascotas registradas');
                 return;
             }
@@ -613,7 +749,9 @@
                     <strong>Color:</strong> ${mascota.color}
                     ${mascota.duenio ? `<br><strong>Dueño:</strong> ${mascota.duenio.nombre} ${mascota.duenio.apellido}` : ''}
                     <div style="margin-top: 10px;">
-                        <button class="btn btn-danger" onclick="deleteMascota(${mascota.id})">Eliminar</button>
+                        <button class="btn btn-danger" onclick="deleteMascota(${mascota.id})" ${!isOnline ? 'disabled' : ''}>
+                            Eliminar
+                        </button>
                     </div>
                 </div>
             `).join('');
@@ -621,6 +759,11 @@
 
         document.getElementById('mascotaForm').addEventListener('submit', async function(e) {
             e.preventDefault();
+            
+            if (!isOnline) {
+                showMessage('No hay conexión con el servidor', 'error');
+                return;
+            }
             
             const duenioId = document.getElementById('mascotaDuenio').value;
             const duenio = dueniosData.find(d => d.id_duenio == duenioId);
@@ -634,64 +777,61 @@
             };
 
             try {
-                const response = await fetch(`${API_BASE}/mascotas/crear`, {
+                await handleApiRequest(`${API_BASE}/mascotas/crear`, {
                     method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json'
-                    },
                     body: JSON.stringify(mascota)
                 });
-
-                if (!response.ok) throw new Error('Error al crear mascota');
                 
                 showMessage('Mascota creada exitosamente');
                 this.reset();
-                getMascotas();
+                await getMascotas();
             } catch (error) {
-                console.error('Error:', error);
-                showMessage('Error al crear la mascota', 'error');
+                console.error('Error al crear mascota:', error);
+                showMessage(`Error: ${error.message}`, 'error');
             }
         });
 
         async function deleteMascota(id) {
+            if (!isOnline) {
+                showMessage('No hay conexión con el servidor', 'error');
+                return;
+            }
+
             if (!confirm('¿Está seguro de eliminar esta mascota?')) return;
 
             try {
-                const response = await fetch(`${API_BASE}/mascotas/borrar/${id}`, {
+                await handleApiRequest(`${API_BASE}/mascotas/borrar/${id}`, {
                     method: 'DELETE'
                 });
-
-                if (!response.ok) throw new Error('Error al eliminar mascota');
                 
                 showMessage('Mascota eliminada exitosamente');
-                getMascotas();
+                await getMascotas();
             } catch (error) {
-                console.error('Error:', error);
-                showMessage('Error al eliminar la mascota', 'error');
+                console.error('Error al eliminar mascota:', error);
+                showMessage(`Error: ${error.message}`, 'error');
             }
         }
 
-        // CANICHES
+        // CANICHES - Funciones mejoradas
         async function getCaniches() {
             showLoading('canichesList');
             try {
-                const response = await fetch(`${API_BASE}/mascotas/traer-caniches`);
-                if (!response.ok) throw new Error('Error al obtener caniches');
-                
-                const caniches = await response.json();
+                const caniches = await handleApiRequest(`${API_BASE}/mascotas/traer-caniches`);
                 displayCaniches(caniches);
                 document.getElementById('totalCaniches').textContent = caniches.length;
+                updateConnectionStatus(true);
             } catch (error) {
-                console.error('Error:', error);
-                showMessage('Error al cargar los caniches', 'error');
-                showEmptyState('canichesList', 'No se pudieron cargar los caniches');
+                console.error('Error al obtener caniches:', error);
+                showMessage(`Error: ${error.message}`, 'error');
+                showEmptyState('canichesList', 'No se pudieron cargar los caniches', true);
+                updateConnectionStatus(false);
             }
         }
 
         function displayCaniches(caniches) {
             const container = document.getElementById('canichesList');
             
-            if (caniches.length === 0) {
+            if (!caniches || caniches.length === 0) {
                 showEmptyState('canichesList', 'No hay caniches registrados');
                 return;
             }
@@ -705,26 +845,25 @@
             `).join('');
         }
 
-        // RELACIONES MASCOTA-DUEÑO
+        // RELACIONES MASCOTA-DUEÑO - Funciones mejoradas
         async function getMascoDuenios() {
             showLoading('relacionesList');
             try {
-                const response = await fetch(`${API_BASE}/mascotas/traer-duenios`);
-                if (!response.ok) throw new Error('Error al obtener relaciones');
-                
-                const relaciones = await response.json();
+                const relaciones = await handleApiRequest(`${API_BASE}/mascotas/traer-duenios`);
                 displayRelaciones(relaciones);
+                updateConnectionStatus(true);
             } catch (error) {
-                console.error('Error:', error);
-                showMessage('Error al cargar las relaciones', 'error');
-                showEmptyState('relacionesList', 'No se pudieron cargar las relaciones');
+                console.error('Error al obtener relaciones:', error);
+                showMessage(`Error: ${error.message}`, 'error');
+                showEmptyState('relacionesList', 'No se pudieron cargar las relaciones', true);
+                updateConnectionStatus(false);
             }
         }
 
         function displayRelaciones(relaciones) {
             const container = document.getElementById('relacionesList');
             
-            if (relaciones.length === 0) {
+            if (!relaciones || relaciones.length === 0) {
                 showEmptyState('relacionesList', 'No hay relaciones registradas');
                 return;
             }
@@ -739,10 +878,19 @@
             `).join('');
         }
 
-        // UTILIDADES
+        // UTILIDADES mejoradas
         function loadDueniosSelect() {
             const select = document.getElementById('mascotaDuenio');
             select.innerHTML = '<option value="">Seleccionar dueño...</option>';
+            
+            if (!dueniosData || dueniosData.length === 0) {
+                const option = document.createElement('option');
+                option.value = '';
+                option.textContent = 'No hay dueños disponibles';
+                option.disabled = true;
+                select.appendChild(option);
+                return;
+            }
             
             dueniosData.forEach(duenio => {
                 const option = document.createElement('option');
@@ -753,9 +901,21 @@
         }
 
         function updateStats() {
-            document.getElementById('totalDuenios').textContent = dueniosData.length;
-            document.getElementById('totalMascotas').textContent = mascotasData.length;
+            document.getElementById('totalDuenios').textContent = dueniosData ? dueniosData.length : 0;
+            document.getElementById('totalMascotas').textContent = mascotasData ? mascotasData.length : 0;
         }
+
+        // Verificación periódica de conexión
+        setInterval(async () => {
+            const wasOnline = isOnline;
+            await checkConnection();
+            
+            // Si se recuperó la conexión, reinitializar
+            if (!wasOnline && isOnline) {
+                showMessage('Conexión restaurada', 'success');
+                initializeApp();
+            }
+        }, 30000); // Verificar cada 30 segundos
     </script>
 </body>
 </html>
