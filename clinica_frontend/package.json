@@ -1,0 +1,16 @@
+{
+  "name": "veterinaria-frontend",
+  "version": "1.0.0",
+  "description": "Frontend para aplicación de veterinaria",
+  "main": "index.html",
+  "scripts": {
+    "start": "serve -s . -l 3000",
+    "build": "echo 'No build needed for static HTML'"
+  },
+  "dependencies": {
+    "serve": "^14.2.0"
+  },
+  "engines": {
+    "node": ">=14"
+  }
+}
